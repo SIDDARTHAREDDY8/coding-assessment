@@ -7,12 +7,7 @@ function getApiBaseUrl(): string {
   return process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 }
 
-export type DocumentStage =
-  | 'DRAFT_REVIEW'
-  | 'LEGAL_REVIEW'
-  | 'FINAL_APPROVAL';
-
-export type DocumentStatus = 'IN_PROGRESS' | 'APPROVED';
+export type DocumentStatus = 'IN_PROGRESS' | 'APPROVED' | 'DECLINED';
 
 export type User = {
   id: string;
@@ -22,28 +17,66 @@ export type User = {
   jobTitle: string | null;
 };
 
+export type Stage = {
+  id: string;
+  name: string;
+  approver: User;
+};
+
 export type DocumentSummary = {
   id: string;
   title: string;
-  currentStage: DocumentStage;
   status: DocumentStatus;
-};
-
-export type DocumentDetail = DocumentSummary & {
-  body: string;
-  draftReviewApprover: User;
-  legalReviewApprover: User;
-  finalApprovalApprover: User;
+  currentStageIndex: number;
+  currentStageName: string;
+  currentApproverName: string;
+  createdById: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
-export type CreateDocumentInput = {
+export type Paginated<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+export type DocumentDetail = {
+  id: string;
   title: string;
   body: string;
-  draftReviewApproverId: string;
-  legalReviewApproverId: string;
-  finalApprovalApproverId: string;
+  stages: Stage[];
+  currentStageIndex: number;
+  status: DocumentStatus;
+  declineReason: string | null;
+  createdBy: User | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DocumentEventAction =
+  | 'CREATED'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'REOPENED'
+  | 'UPDATED'
+  | 'STAGES_UPDATED';
+
+export type DocumentEventItem = {
+  id: string;
+  action: DocumentEventAction;
+  documentId: string;
+  actor: { id: string; name: string; email: string } | null;
+  stageName: string | null;
+  reason: string | null;
+  createdAt: string;
+};
+
+export const STATUS_LABELS: Record<DocumentStatus, string> = {
+  IN_PROGRESS: 'In Progress',
+  APPROVED: 'Approved',
+  DECLINED: 'Declined',
 };
 
 export class ApiError extends Error {
@@ -84,21 +117,83 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function getDocuments() {
-  return request<DocumentSummary[]>('/documents');
+function toQueryString(params: Record<string, string | number | undefined>) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      search.set(key, String(value));
+    }
+  }
+  const query = search.toString();
+  return query ? `?${query}` : '';
+}
+
+export function getDocuments(options: {
+  page: number;
+  limit: number;
+  currentApproverId?: string;
+  createdById?: string;
+}) {
+  return request<Paginated<DocumentSummary>>(
+    `/documents${toQueryString({
+      page: options.page,
+      limit: options.limit,
+      currentApproverId: options.currentApproverId,
+      createdById: options.createdById,
+    })}`,
+  );
 }
 
 export function getDocument(id: string) {
   return request<DocumentDetail>(`/documents/${id}`);
 }
 
+export function getEvents(options: {
+  documentId?: string;
+  page: number;
+  limit: number;
+}) {
+  return request<Paginated<DocumentEventItem>>(
+    `/events${toQueryString({
+      documentId: options.documentId,
+      page: options.page,
+      limit: options.limit,
+    })}`,
+  );
+}
+
 export function getUsers() {
   return request<User[]>('/users');
 }
 
-export function createDocument(input: CreateDocumentInput) {
+export type StageInput = {
+  name: string;
+  approverId: string;
+};
+
+export function createDocument(input: {
+  title: string;
+  body: string;
+  createdById: string;
+  stages: StageInput[];
+}) {
   return request<DocumentDetail>('/documents', {
     method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateDocument(
+  id: string,
+  input: {
+    userId: string;
+    title?: string;
+    body?: string;
+    stages?: StageInput[];
+  },
+) {
+  return request<DocumentDetail>(`/documents/${id}`, {
+    method: 'PATCH',
     body: JSON.stringify(input),
   });
 }
@@ -110,8 +205,15 @@ export function approveDocument(id: string, userId: string) {
   });
 }
 
-export function rejectDocument(id: string, userId: string) {
+export function rejectDocument(id: string, userId: string, reason?: string) {
   return request<DocumentDetail>(`/documents/${id}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ userId, reason: reason?.trim() || undefined }),
+  });
+}
+
+export function reopenDocument(id: string, userId: string) {
+  return request<DocumentDetail>(`/documents/${id}/reopen`, {
     method: 'POST',
     body: JSON.stringify({ userId }),
   });

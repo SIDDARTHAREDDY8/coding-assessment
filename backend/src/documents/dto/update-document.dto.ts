@@ -2,6 +2,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsNotEmpty,
+  IsOptional,
   IsString,
   IsUUID,
   ValidateNested,
@@ -9,21 +10,24 @@ import {
 import { Type } from 'class-transformer';
 import { StageInputDto } from './stage.dto';
 
-export class CreateDocumentDto {
-  @IsString()
-  @IsNotEmpty()
-  title!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  body!: string;
-
+export class UpdateDocumentDto {
   @IsUUID()
-  createdById!: string;
+  userId!: string;
 
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  body?: string;
+
+  @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => StageInputDto)
-  stages!: StageInputDto[];
+  stages?: StageInputDto[];
 }

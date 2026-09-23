@@ -1,22 +1,27 @@
 import { randomUUID } from 'crypto';
 import {
+  Collection,
   Entity,
   Enum,
   ManyToOne,
+  OneToMany,
   OptionalProps,
   PrimaryKey,
   Property,
 } from '@mikro-orm/core';
 import { User } from '../users/user.entity';
-import { DocumentStage } from './document-stage.enum';
+import { DocumentStage } from './document-stage.entity';
+import { DocumentEvent } from './document-event.entity';
 import { DocumentStatus } from './document-status.enum';
 
 @Entity({ tableName: 'documents' })
 export class Document {
   [OptionalProps]?:
     | 'id'
-    | 'currentStage'
+    | 'currentStageIndex'
     | 'status'
+    | 'declineReason'
+    | 'createdBy'
     | 'createdAt'
     | 'updatedAt';
 
@@ -29,20 +34,23 @@ export class Document {
   @Property({ type: 'text' })
   body!: string;
 
-  @Enum(() => DocumentStage)
-  currentStage: DocumentStage = DocumentStage.DRAFT_REVIEW;
+  @Property()
+  currentStageIndex = 0;
 
   @Enum(() => DocumentStatus)
   status: DocumentStatus = DocumentStatus.IN_PROGRESS;
 
-  @ManyToOne(() => User)
-  draftReviewApprover!: User;
+  @Property({ nullable: true, type: 'text' })
+  declineReason: string | null = null;
 
-  @ManyToOne(() => User)
-  legalReviewApprover!: User;
+  @ManyToOne(() => User, { nullable: true })
+  createdBy: User | null = null;
 
-  @ManyToOne(() => User)
-  finalApprovalApprover!: User;
+  @OneToMany(() => DocumentStage, (stage) => stage.document)
+  stages = new Collection<DocumentStage>(this);
+
+  @OneToMany(() => DocumentEvent, (event) => event.document)
+  events = new Collection<DocumentEvent>(this);
 
   @Property({ onCreate: () => new Date() })
   createdAt: Date = new Date();

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -14,15 +15,12 @@ import {
   type StageRowErrors,
 } from '@/components/stage-editor';
 import { useActingAs } from '@/context/acting-as-context';
-import { createDocument, type User } from '@/lib/api';
-
-const DEFAULT_STAGE_NAMES = ['Draft Review', 'Legal Review', 'Final Approval'];
-
-function buildDefaultStages(users: User[]): StageRow[] {
-  return DEFAULT_STAGE_NAMES.map((name, index) =>
-    newStageRow(name, users[index]?.id ?? users[0]?.id ?? ''),
-  );
-}
+import {
+  ApiError,
+  updateDocument,
+  type DocumentDetail,
+  type User,
+} from '@/lib/api';
 
 function validateStages(stages: StageRow[]): {
   rowErrors: Record<string, StageRowErrors>;
@@ -39,18 +37,25 @@ function validateStages(stages: StageRow[]): {
   });
   return {
     rowErrors,
-    generalError:
-      stages.length === 0 ? 'Add at least one stage.' : undefined,
+    generalError: stages.length === 0 ? 'Add at least one stage.' : undefined,
   };
 }
 
-export function NewDocumentForm({ users }: { users: User[] }) {
+export function EditDocumentForm({
+  document,
+  users,
+}: {
+  document: DocumentDetail;
+  users: User[];
+}) {
   const router = useRouter();
-  const { activeUserId, activeUser } = useActingAs();
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
+  const { activeUserId } = useActingAs();
+  const [title, setTitle] = useState(document.title);
+  const [body, setBody] = useState(document.body);
   const [stages, setStages] = useState<StageRow[]>(() =>
-    buildDefaultStages(users),
+    document.stages.map((stage) =>
+      newStageRow(stage.name, stage.approver.id),
+    ),
   );
   const [titleError, setTitleError] = useState<string | undefined>();
   const [bodyError, setBodyError] = useState<string | undefined>();
@@ -59,16 +64,19 @@ export function NewDocumentForm({ users }: { users: User[] }) {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  if (users.length === 0) {
+  const isCreator =
+    activeUserId !== '' && document.createdBy?.id === activeUserId;
+
+  if (!isCreator) {
     return (
-      <div className="empty-state">
-        <p className="text-base font-medium text-stone-800">
-          No users available
-        </p>
-        <p className="mt-1.5 text-sm text-stone-500">
-          Start the API with seed data first.
-        </p>
-      </div>
+      <Alert variant="destructive">
+        <AlertTitle>Not allowed</AlertTitle>
+        <AlertDescription>
+          Only the creator of this document can edit it. Switch the
+          &ldquo;Acting as&rdquo; user in the top bar to{' '}
+          {document.createdBy ? document.createdBy.name : 'the creator'}.
+        </AlertDescription>
+      </Alert>
     );
   }
 
@@ -97,19 +105,14 @@ export function NewDocumentForm({ users }: { users: User[] }) {
       valid = false;
     }
 
-    if (!activeUserId) {
-      setSubmitError('Select a user in the top bar first.');
-      valid = false;
-    }
-
     if (!valid) return;
 
     setSubmitting(true);
     try {
-      const document = await createDocument({
+      await updateDocument(document.id, {
+        userId: activeUserId,
         title: title.trim(),
         body: body.trim(),
-        createdById: activeUserId,
         stages: stages.map((row) => ({
           name: row.name.trim(),
           approverId: row.approverId,
@@ -118,9 +121,13 @@ export function NewDocumentForm({ users }: { users: User[] }) {
       router.push(`/documents/${document.id}`);
       router.refresh();
     } catch (err) {
-      setSubmitError(
-        err instanceof Error ? err.message : 'Failed to create document',
-      );
+      if (err instanceof ApiError && err.status === 403) {
+        setSubmitError('Only the creator of this document can edit it.');
+      } else {
+        setSubmitError(
+          err instanceof Error ? err.message : 'Failed to update document',
+        );
+      }
       setSubmitting(false);
     }
   }
@@ -130,15 +137,14 @@ export function NewDocumentForm({ users }: { users: User[] }) {
       <Card>
         <CardContent className="space-y-6 pt-6">
           <div>
-            <label htmlFor="doc-title" className="field-label">
+            <label htmlFor="edit-title" className="field-label">
               Title
             </label>
             <input
-              id="doc-title"
+              id="edit-title"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               disabled={submitting}
-              placeholder="e.g. Vendor Onboarding Policy"
               className={`input mt-1.5 ${titleError ? 'input-error' : ''}`}
               aria-invalid={Boolean(titleError)}
             />
@@ -146,16 +152,15 @@ export function NewDocumentForm({ users }: { users: User[] }) {
           </div>
 
           <div>
-            <label htmlFor="doc-body" className="field-label">
+            <label htmlFor="edit-body" className="field-label">
               Body
             </label>
             <Textarea
-              id="doc-body"
+              id="edit-body"
               value={body}
               onChange={(event) => setBody(event.target.value)}
               disabled={submitting}
               rows={7}
-              placeholder="Document content…"
               className={`mt-1.5 ${bodyError ? 'border-red-400 focus:border-red-500' : ''}`}
               aria-invalid={Boolean(bodyError)}
             />
@@ -166,8 +171,7 @@ export function NewDocumentForm({ users }: { users: User[] }) {
             <div>
               <p className="section-label">Approval stages</p>
               <p className="field-hint mt-1">
-                Stages run in order from top to bottom. Each stage is reviewed
-                by its approver.
+                Changing stages resets the workflow to the first stage.
               </p>
             </div>
             <StageEditor
@@ -182,7 +186,7 @@ export function NewDocumentForm({ users }: { users: User[] }) {
 
           {submitError && (
             <Alert variant="destructive">
-              <AlertTitle>Couldn&apos;t create the document</AlertTitle>
+              <AlertTitle>Couldn&apos;t update the document</AlertTitle>
               <AlertDescription>{submitError}</AlertDescription>
             </Alert>
           )}
@@ -190,13 +194,11 @@ export function NewDocumentForm({ users }: { users: User[] }) {
           <div className="flex items-center gap-3 border-t border-stone-100 pt-6">
             <Button type="submit" disabled={submitting} className="min-w-[10rem]">
               {submitting && <Spinner />}
-              {submitting ? 'Creating…' : 'Create document'}
+              {submitting ? 'Saving…' : 'Save changes'}
             </Button>
-            {activeUser && (
-              <span className="text-sm text-stone-500">
-                Creating as {activeUser.name}
-              </span>
-            )}
+            <Button asChild variant="outline" disabled={submitting}>
+              <Link href={`/documents/${document.id}`}>Cancel</Link>
+            </Button>
           </div>
         </CardContent>
       </Card>

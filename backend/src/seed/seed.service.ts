@@ -2,12 +2,19 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { MikroORM } from '@mikro-orm/core';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Document } from '../documents/document.entity';
-import { DocumentStage } from '../documents/document-stage.enum';
+import { DocumentStage } from '../documents/document-stage.entity';
+import { DocumentEvent } from '../documents/document-event.entity';
+import { DocumentEventAction } from '../documents/document-event-action.enum';
 import { DocumentStatus } from '../documents/document-status.enum';
 import { User } from '../users/user.entity';
 
 function avatarUrlFor(name: string): string {
   return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}`;
+}
+
+interface StageSeed {
+  name: string;
+  approver: User;
 }
 
 @Injectable()
@@ -65,38 +72,108 @@ export class SeedService implements OnModuleInit {
       avatarUrl: avatarUrlFor('Eve Brooks'),
     });
 
-    this.em.create(Document, {
-      title: 'Vendor Onboarding Policy',
-      body: 'Draft policy covering how new vendors are evaluated and onboarded.',
-      currentStage: DocumentStage.DRAFT_REVIEW,
-      status: DocumentStatus.IN_PROGRESS,
-      draftReviewApprover: alice,
-      legalReviewApprover: bob,
-      finalApprovalApprover: cara,
-    });
+    this.createDocument(
+      'Vendor Onboarding Policy',
+      'Draft policy covering how new vendors are evaluated and onboarded.',
+      alice,
+      [
+        { name: 'Draft Review', approver: alice },
+        { name: 'Legal Review', approver: bob },
+        { name: 'Final Approval', approver: cara },
+      ],
+    );
 
-    this.em.create(Document, {
-      title: 'Data Retention Guidelines',
-      body: 'Guidelines for how long customer data is retained across products.',
-      currentStage: DocumentStage.LEGAL_REVIEW,
-      status: DocumentStatus.IN_PROGRESS,
-      draftReviewApprover: dan,
-      legalReviewApprover: eve,
-      finalApprovalApprover: alice,
-    });
+    const dataRetention = this.createDocument(
+      'Data Retention Guidelines',
+      'Guidelines for how long customer data is retained across products.',
+      dan,
+      [
+        { name: 'Draft Review', approver: dan },
+        { name: 'Legal Review', approver: eve },
+        { name: 'Final Approval', approver: alice },
+      ],
+      { currentStageIndex: 1 },
+    );
+    this.logEvent(
+      dataRetention,
+      dan,
+      DocumentEventAction.APPROVED,
+      'Draft Review',
+    );
 
-    this.em.create(Document, {
-      title: 'Incident Response Playbook',
-      body: 'Fully approved playbook for responding to security incidents.',
-      currentStage: DocumentStage.FINAL_APPROVAL,
-      status: DocumentStatus.APPROVED,
-      draftReviewApprover: bob,
-      legalReviewApprover: cara,
-      finalApprovalApprover: dan,
-    });
+    const incidentPlaybook = this.createDocument(
+      'Incident Response Playbook',
+      'Fully approved playbook for responding to security incidents.',
+      bob,
+      [
+        { name: 'Draft Review', approver: bob },
+        { name: 'Legal Review', approver: cara },
+        { name: 'Final Approval', approver: dan },
+      ],
+      { currentStageIndex: 2, status: DocumentStatus.APPROVED },
+    );
+    this.logEvent(
+      incidentPlaybook,
+      bob,
+      DocumentEventAction.APPROVED,
+      'Draft Review',
+    );
+    this.logEvent(
+      incidentPlaybook,
+      cara,
+      DocumentEventAction.APPROVED,
+      'Legal Review',
+    );
 
     await this.em.flush();
     this.logger.log('Seed data created (5 users, 3 documents)');
+  }
+
+  private createDocument(
+    title: string,
+    body: string,
+    createdBy: User,
+    stages: StageSeed[],
+    opts: { currentStageIndex?: number; status?: DocumentStatus } = {},
+  ): Document {
+    const document = this.em.create(Document, {
+      title,
+      body,
+      currentStageIndex: opts.currentStageIndex ?? 0,
+      status: opts.status ?? DocumentStatus.IN_PROGRESS,
+      createdBy,
+    });
+    this.em.persist(document);
+
+    stages.forEach((stage, index) => {
+      const stageRow = this.em.create(DocumentStage, {
+        document,
+        position: index,
+        name: stage.name,
+        approver: stage.approver,
+      });
+      this.em.persist(stageRow);
+    });
+
+    this.logEvent(document, createdBy, DocumentEventAction.CREATED);
+    return document;
+  }
+
+  private logEvent(
+    document: Document,
+    actor: User | null,
+    action: DocumentEventAction,
+    stageName: string | null = null,
+    reason: string | null = null,
+  ): void {
+    const event = this.em.create(DocumentEvent, {
+      document,
+      actor,
+      action,
+      stageName,
+      reason,
+    });
+    this.em.persist(event);
   }
 
   /** Fill profile fields if an older seed volume predates these columns. */

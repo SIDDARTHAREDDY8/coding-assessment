@@ -1,0 +1,8 @@
+export enum DocumentEventAction {
+  CREATED = 'CREATED',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  REOPENED = 'REOPENED',
+  UPDATED = 'UPDATED',
+  STAGES_UPDATED = 'STAGES_UPDATED',
+}

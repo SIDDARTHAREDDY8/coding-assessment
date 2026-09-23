@@ -3,10 +3,12 @@ import { defineConfig } from '@mikro-orm/postgresql';
 import { Migrator } from '@mikro-orm/migrations';
 import './load-env';
 import { Document } from './documents/document.entity';
+import { DocumentStage } from './documents/document-stage.entity';
+import { DocumentEvent } from './documents/document-event.entity';
 import { User } from './users/user.entity';
 
 export default defineConfig({
-  entities: [User, Document],
+  entities: [User, Document, DocumentStage, DocumentEvent],
   clientUrl:
     process.env.DATABASE_URL ??
     'postgresql://postgres:postgres@localhost:5432/document_approval',
